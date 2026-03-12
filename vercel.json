@@ -1,14 +1,14 @@
 {
   "version": 2,
   "functions": {
-    "api/taskgraph.ts": {
+    "api/taskgraph.js": {
       "maxDuration": 30
     }
   },
   "routes": [
     {
       "src": "/api/taskgraph",
-      "dest": "/api/taskgraph.ts"
+      "dest": "/api/taskgraph.js"
     },
     {
       "handle": "filesystem"
