@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TaskGraph — Parallelization Risk Estimator</title>
+<meta name="description" content="Estimate whether engineering tasks can safely run in parallel without causing merge conflicts.">
+<meta property="og:title" content="TaskGraph — Parallelization Risk Estimator">
+<meta property="og:description" content="Estimate whether engineering tasks can safely run in parallel without causing merge conflicts.">
+<meta property="og:type" content="website">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#0a0a0b;--surface:#141416;--border:#232328;--text:#e4e4e7;--muted:#71717a;--accent:#6366f1;--accent-dim:#4f46e5;--green:#22c55e;--yellow:#eab308;--red:#ef4444;--radius:8px}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);line-height:1.6;min-height:100vh}
+a{color:var(--accent)}
+
+.container{max-width:960px;margin:0 auto;padding:24px 16px}
+
+header{text-align:center;padding:48px 0 32px}
+header h1{font-size:2rem;font-weight:700;letter-spacing:-0.03em}
+header h1 span{color:var(--accent)}
+header p{color:var(--muted);margin-top:8px;font-size:1.05rem}
+
+.input-section{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:24px;margin-bottom:24px}
+.input-section label{display:block;font-weight:600;margin-bottom:8px;font-size:0.9rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted)}
+
+.tasks-list{display:flex;flex-direction:column;gap:8px;margin-bottom:16px}
+.task-row{display:flex;gap:8px;align-items:center}
+.task-row input{flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px 14px;color:var(--text);font-size:0.95rem;outline:none;transition:border-color 0.2s}
+.task-row input:focus{border-color:var(--accent)}
+.task-row input::placeholder{color:#52525b}
+.remove-btn{background:none;border:1px solid var(--border);border-radius:6px;color:var(--muted);cursor:pointer;width:36px;height:36px;display:flex;align-items:center;justify-content:center;font-size:1.1rem;transition:all 0.2s}
+.remove-btn:hover{border-color:var(--red);color:var(--red)}
+
+.btn-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.btn-secondary{background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:10px 18px;cursor:pointer;font-size:0.9rem;transition:all 0.2s}
+.btn-secondary:hover{border-color:var(--accent)}
+.btn-primary{background:var(--accent);border:none;border-radius:6px;color:#fff;padding:10px 24px;cursor:pointer;font-size:0.95rem;font-weight:600;transition:all 0.2s}
+.btn-primary:hover{background:var(--accent-dim)}
+.btn-primary:disabled{opacity:0.5;cursor:not-allowed}
+.spacer{flex:1}
+
+.api-key-toggle{background:none;border:none;color:var(--muted);font-size:0.8rem;cursor:pointer;text-decoration:underline;padding:0}
+.api-key-input{margin-top:12px;display:none}
+.api-key-input.show{display:block}
+.api-key-input input{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px 14px;color:var(--text);font-size:0.9rem;outline:none}
+.api-key-input input:focus{border-color:var(--accent)}
+.api-key-hint{font-size:0.75rem;color:var(--muted);margin-top:4px}
+
+.loading{text-align:center;padding:48px 0;display:none}
+.loading.show{display:block}
+.spinner{width:32px;height:32px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 0.8s linear infinite;margin:0 auto 16px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+#results{display:none}
+#results.show{display:block}
+
+.results-section{margin-bottom:32px}
+.results-section h2{font-size:1.3rem;font-weight:700;margin-bottom:16px;letter-spacing:-0.02em}
+
+.summary-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:32px;font-size:0.95rem;line-height:1.7;color:var(--muted)}
+
+/* Matrix */
+.matrix-wrapper{overflow-x:auto;margin-bottom:8px}
+table.matrix{border-collapse:collapse;width:100%;background:var(--surface);border-radius:var(--radius);overflow:hidden}
+table.matrix th,table.matrix td{padding:12px 16px;text-align:center;border:1px solid var(--border);font-size:0.85rem}
+table.matrix th{background:var(--bg);color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:0.04em;font-size:0.75rem}
+table.matrix th:first-child{text-align:left}
+table.matrix td:first-child{text-align:left;font-weight:500;background:var(--bg);color:var(--muted);font-size:0.8rem;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cell-low{background:#052e16;color:var(--green)}
+.cell-med{background:#422006;color:var(--yellow)}
+.cell-high{background:#450a0a;color:var(--red)}
+.cell-diag{background:var(--bg);color:#3f3f46}
+
+/* Execution order */
+.exec-order{list-style:none;counter-reset:step}
+.exec-order li{counter-increment:step;display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:8px;font-size:0.9rem}
+.exec-order li::before{content:counter(step);background:var(--accent);color:#fff;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.8rem;flex-shrink:0}
+
+/* DAG */
+#dag-container{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);min-height:300px;display:flex;align-items:center;justify-content:center}
+#dag-container svg{width:100%;height:100%}
+
+/* Conflict details */
+.conflict-cards{display:grid;gap:8px}
+.conflict-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px;display:grid;grid-template-columns:1fr auto;gap:8px;align-items:start}
+.conflict-card .tasks{font-size:0.85rem}
+.conflict-card .tasks span{color:var(--muted)}
+.conflict-card .prob{font-size:1.4rem;font-weight:700;text-align:right}
+.conflict-card .reason{grid-column:1/-1;font-size:0.8rem;color:var(--muted)}
+.conflict-card .tags{grid-column:1/-1;display:flex;gap:4px;flex-wrap:wrap}
+.conflict-card .tag{font-size:0.7rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:2px 8px;color:var(--muted)}
+
+footer{text-align:center;padding:40px 0;color:#3f3f46;font-size:0.8rem}
+
+@media(max-width:640px){
+  header h1{font-size:1.5rem}
+  .container{padding:16px 12px}
+}
+</style>
+</head>
+<body>
+
+<div class="container">
+  <header>
+    <h1>Task<span>Graph</span></h1>
+    <p>Estimate whether engineering tasks can safely run in parallel</p>
+  </header>
+
+  <div class="input-section">
+    <label>Engineering Tasks</label>
+    <div class="tasks-list" id="tasksList">
+      <div class="task-row">
+        <input type="text" placeholder='e.g. "Split monolith into services"' value="Split monolith into services">
+        <button class="remove-btn" onclick="removeTask(this)" title="Remove">&times;</button>
+      </div>
+      <div class="task-row">
+        <input type="text" placeholder='e.g. "Add strict TypeScript types"' value="Add strict TypeScript types">
+        <button class="remove-btn" onclick="removeTask(this)" title="Remove">&times;</button>
+      </div>
+      <div class="task-row">
+        <input type="text" placeholder='e.g. "Refactor authentication module"' value="Refactor authentication module">
+        <button class="remove-btn" onclick="removeTask(this)" title="Remove">&times;</button>
+      </div>
+    </div>
+
+    <div class="btn-row">
+      <button class="btn-secondary" onclick="addTask()">+ Add Task</button>
+      <button class="api-key-toggle" onclick="toggleApiKey()">API Key (optional)</button>
+      <span class="spacer"></span>
+      <button class="btn-primary" id="analyzeBtn" onclick="analyze()">Estimate Parallelization Risk</button>
+    </div>
+
+    <div class="api-key-input" id="apiKeySection">
+      <input type="password" id="apiKey" placeholder="sk-ant-...">
+      <p class="api-key-hint">Provide an Anthropic API key for LLM-powered analysis. Without it, a keyword heuristic is used. Your key is sent only to the Anthropic API and is never stored.</p>
+    </div>
+  </div>
+
+  <div class="loading" id="loading">
+    <div class="spinner"></div>
+    <p>Analyzing task dependencies...</p>
+  </div>
+
+  <div id="results">
+    <div class="summary-card" id="summary"></div>
+
+    <div class="results-section">
+      <h2>Conflict Probability Matrix</h2>
+      <div class="matrix-wrapper" id="matrixWrapper"></div>
+    </div>
+
+    <div class="results-section">
+      <h2>Recommended Execution Order</h2>
+      <ol class="exec-order" id="execOrder"></ol>
+    </div>
+
+    <div class="results-section">
+      <h2>Dependency Graph</h2>
+      <div id="dag-container"></div>
+    </div>
+
+    <div class="results-section">
+      <h2>Conflict Details</h2>
+      <div class="conflict-cards" id="conflictCards"></div>
+    </div>
+  </div>
+
+  <footer>TaskGraph &mdash; built for engineers who ship in parallel</footer>
+</div>
+
+<script>
+function addTask() {
+  const list = document.getElementById('tasksList');
+  if (list.children.length >= 10) return;
+  const row = document.createElement('div');
+  row.className = 'task-row';
+  row.innerHTML = '<input type="text" placeholder="Describe an engineering task...">' +
+    '<button class="remove-btn" onclick="removeTask(this)" title="Remove">&times;</button>';
+  list.appendChild(row);
+  row.querySelector('input').focus();
+}
+
+function removeTask(btn) {
+  const list = document.getElementById('tasksList');
+  if (list.children.length <= 2) return;
+  btn.parentElement.remove();
+}
+
+function toggleApiKey() {
+  document.getElementById('apiKeySection').classList.toggle('show');
+}
+
+function getTasks() {
+  return Array.from(document.querySelectorAll('.task-row input'))
+    .map(i => i.value.trim())
+    .filter(Boolean);
+}
+
+async function analyze() {
+  const tasks = getTasks();
+  if (tasks.length < 2) { alert('Enter at least 2 tasks.'); return; }
+
+  const btn = document.getElementById('analyzeBtn');
+  btn.disabled = true;
+  document.getElementById('loading').classList.add('show');
+  document.getElementById('results').classList.remove('show');
+
+  try {
+    const apiKey = document.getElementById('apiKey').value.trim();
+    const body = { tasks };
+    if (apiKey) body.apiKey = apiKey;
+
+    const res = await fetch('/api/taskgraph', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || 'Analysis failed');
+    }
+
+    const data = await res.json();
+    renderResults(tasks, data);
+  } catch (e) {
+    alert('Error: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    document.getElementById('loading').classList.remove('show');
+  }
+}
+
+function renderResults(tasks, data) {
+  // Summary
+  document.getElementById('summary').textContent = data.summary;
+
+  // Matrix
+  const probMap = {};
+  data.conflicts.forEach(c => {
+    const key = c.taskA + '|||' + c.taskB;
+    const keyR = c.taskB + '|||' + c.taskA;
+    probMap[key] = c;
+    probMap[keyR] = { ...c, taskA: c.taskB, taskB: c.taskA };
+  });
+
+  const shortName = t => t.length > 30 ? t.slice(0, 28) + '...' : t;
+
+  let html = '<table class="matrix"><thead><tr><th></th>';
+  tasks.forEach(t => { html += '<th title="' + esc(t) + '">' + esc(shortName(t)) + '</th>'; });
+  html += '</tr></thead><tbody>';
+  tasks.forEach((tA, i) => {
+    html += '<tr><td title="' + esc(tA) + '">' + esc(shortName(tA)) + '</td>';
+    tasks.forEach((tB, j) => {
+      if (i === j) {
+        html += '<td class="cell-diag">&mdash;</td>';
+      } else {
+        const key = tA + '|||' + tB;
+        const c = probMap[key];
+        const p = c ? c.probability : 0;
+        const cls = p >= 0.5 ? 'cell-high' : p >= 0.2 ? 'cell-med' : 'cell-low';
+        html += '<td class="' + cls + '" title="' + esc((c && c.reason) || '') + '">' + p.toFixed(2) + '</td>';
+      }
+    });
+    html += '</tr>';
+  });
+  html += '</tbody></table>';
+  document.getElementById('matrixWrapper').innerHTML = html;
+
+  // Execution order
+  let orderHtml = '';
+  (data.executionOrder || tasks).forEach(t => {
+    orderHtml += '<li>' + esc(t) + '</li>';
+  });
+  document.getElementById('execOrder').innerHTML = orderHtml;
+
+  // Conflict cards
+  let cardsHtml = '';
+  const sorted = [...data.conflicts].sort((a, b) => b.probability - a.probability);
+  sorted.forEach(c => {
+    const color = c.probability >= 0.5 ? 'var(--red)' : c.probability >= 0.2 ? 'var(--yellow)' : 'var(--green)';
+    cardsHtml += '<div class="conflict-card">' +
+      '<div class="tasks">' + esc(c.taskA) + ' <span>&harr;</span> ' + esc(c.taskB) + '</div>' +
+      '<div class="prob" style="color:' + color + '">' + (c.probability * 100).toFixed(0) + '%</div>' +
+      '<div class="reason">' + esc(c.reason) + '</div>' +
+      '<div class="tags">' + (c.sharedAreas || []).map(a => '<span class="tag">' + esc(a) + '</span>').join('') + '</div>' +
+      '</div>';
+  });
+  document.getElementById('conflictCards').innerHTML = cardsHtml;
+
+  // DAG
+  renderDAG(tasks, data.conflicts);
+
+  document.getElementById('results').classList.add('show');
+  document.getElementById('results').scrollIntoView({ behavior: 'smooth' });
+}
+
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function renderDAG(tasks, conflicts) {
+  const container = document.getElementById('dag-container');
+  const width = container.clientWidth || 600;
+  const height = Math.max(350, tasks.length * 60);
+
+  // Layout: arrange nodes in a circle
+  const cx = width / 2;
+  const cy = height / 2;
+  const radius = Math.min(cx, cy) - 60;
+
+  const nodes = tasks.map((t, i) => {
+    const angle = (2 * Math.PI * i) / tasks.length - Math.PI / 2;
+    return {
+      label: t,
+      x: cx + radius * Math.cos(angle),
+      y: cy + radius * Math.sin(angle),
+    };
+  });
+
+  const taskIndex = {};
+  tasks.forEach((t, i) => { taskIndex[t] = i; });
+
+  let svg = '<svg viewBox="0 0 ' + width + ' ' + height + '" xmlns="http://www.w3.org/2000/svg">';
+
+  // Edges
+  conflicts.forEach(c => {
+    const iA = taskIndex[c.taskA];
+    const iB = taskIndex[c.taskB];
+    if (iA === undefined || iB === undefined) return;
+    const nA = nodes[iA];
+    const nB = nodes[iB];
+    const p = c.probability;
+    const color = p >= 0.5 ? '#ef4444' : p >= 0.2 ? '#eab308' : '#22c55e';
+    const opacity = 0.3 + p * 0.7;
+    const strokeW = 1 + p * 4;
+    svg += '<line x1="' + nA.x + '" y1="' + nA.y + '" x2="' + nB.x + '" y2="' + nB.y + '" stroke="' + color + '" stroke-opacity="' + opacity + '" stroke-width="' + strokeW + '"/>';
+    // Label at midpoint
+    const mx = (nA.x + nB.x) / 2;
+    const my = (nA.y + nB.y) / 2;
+    svg += '<text x="' + mx + '" y="' + (my - 6) + '" text-anchor="middle" fill="' + color + '" font-size="11" font-weight="600">' + (p * 100).toFixed(0) + '%</text>';
+  });
+
+  // Nodes
+  nodes.forEach((n, i) => {
+    svg += '<circle cx="' + n.x + '" cy="' + n.y + '" r="20" fill="#1e1e24" stroke="#6366f1" stroke-width="2"/>';
+    svg += '<text x="' + n.x + '" y="' + (n.y + 5) + '" text-anchor="middle" fill="#e4e4e7" font-size="12" font-weight="700">' + (i + 1) + '</text>';
+    // Task label
+    const short = n.label.length > 25 ? n.label.slice(0, 23) + '...' : n.label;
+    const labelY = n.y > cy ? n.y + 36 : n.y - 30;
+    svg += '<text x="' + n.x + '" y="' + labelY + '" text-anchor="middle" fill="#a1a1aa" font-size="10">' + esc(short) + '</text>';
+  });
+
+  svg += '</svg>';
+  container.innerHTML = svg;
+  container.style.height = height + 'px';
+}
+
+// Allow Enter key to trigger analysis
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Enter' && e.target.tagName === 'INPUT' && e.target.closest('.task-row')) {
+    e.preventDefault();
+    analyze();
+  }
+});
+</script>
+
+</body>
+</html>

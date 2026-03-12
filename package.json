@@ -1,0 +1,18 @@
+{
+  "name": "taskgraph",
+  "version": "1.0.0",
+  "description": "Estimate whether engineering tasks can safely run in parallel without causing merge conflicts",
+  "private": false,
+  "license": "MIT",
+  "scripts": {
+    "dev": "vercel dev",
+    "deploy": "vercel --prod"
+  },
+  "dependencies": {
+    "@vercel/node": "^5.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "vercel": "^39.0.0"
+  }
+}
